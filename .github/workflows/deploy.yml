@@ -1,8 +1,9 @@
 name: Publish website
 on:
   workflow_dispatch:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+    paths: [index.html, .github/workflows/deploy.yml]
 permissions:
   contents: read
   pages: write
@@ -23,7 +24,8 @@ jobs:
           echo "d475c03b15fddf00577ef4469ed6411ca94f333fe47f4ed0143b973588e56642  website.zip" | sha256sum --check -
           mkdir site
           unzip -q website.zip -d site
-          test -f site/index.html
+          curl --fail --location --retry 3 "https://raw.githubusercontent.com/SAHARIARSHOWMIK/bivl100/${{ github.sha }}/index.html" -o site/index.html
+          echo "63d29415443330bf52b1aa69d08e033f6104219919de69e20f2af152cfca0484  site/index.html" | sha256sum --check -
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload website
