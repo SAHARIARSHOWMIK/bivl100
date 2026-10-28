@@ -1,0 +1,35 @@
+name: Publish website
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Download website files
+        run: |
+          curl --fail --location --retry 3 https://github.com/SAHARIARSHOWMIK/bivl100/releases/download/site/website.zip -o website.zip
+          echo "d475c03b15fddf00577ef4469ed6411ca94f333fe47f4ed0143b973588e56642  website.zip" | sha256sum --check -
+          mkdir site
+          unzip -q website.zip -d site
+          test -f site/index.html
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+      - name: Upload website
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - name: Publish Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
