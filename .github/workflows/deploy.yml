@@ -1,37 +1,81 @@
 name: Publish website
+
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [index.html, .github/workflows/deploy.yml]
+    paths: [index.html, website-content.tar.gz, .github/workflows/deploy.yml]
+
 permissions:
   contents: read
   pages: write
   id-token: write
+
 concurrency:
   group: pages
   cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
-      - name: Download website files
+      - name: Prepare current website and unchanged images
         run: |
-          curl --fail --location --retry 3 https://github.com/SAHARIARSHOWMIK/bivl100/releases/download/site/website.zip -o website.zip
-          echo "d475c03b15fddf00577ef4469ed6411ca94f333fe47f4ed0143b973588e56642  website.zip" | sha256sum --check -
+          set -euo pipefail
+
+          curl --fail --location --retry 3 \
+            https://github.com/SAHARIARSHOWMIK/bivl100/releases/download/site/website.zip \
+            -o original-media.zip
+
+          echo "d475c03b15fddf00577ef4469ed6411ca94f333fe47f4ed0143b973588e56642  original-media.zip" | sha256sum --check -
+
           mkdir site
-          unzip -q website.zip -d site
-          curl --fail --location --retry 3 "https://raw.githubusercontent.com/SAHARIARSHOWMIK/bivl100/${{ github.sha }}/index.html" -o site/index.html
-          echo "63d29415443330bf52b1aa69d08e033f6104219919de69e20f2af152cfca0484  site/index.html" | sha256sum --check -
+          unzip -q original-media.zip 'media/*' -d site
+
+          curl --fail --location --retry 3 \
+            "https://raw.githubusercontent.com/SAHARIARSHOWMIK/bivl100/${{ github.sha }}/website-content.tar.gz" \
+            -o current-website.tar.gz
+
+          echo "22eb9d31fe5a82dfb3ef3bf29f7605b1746297361f49f90c311ef306f12b6dc8  current-website.tar.gz" | sha256sum --check -
+
+          tar -xzf current-website.tar.gz -C site
+          test -f site/index.html
+
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+
+          seen = set()
+          cases = list(Path('site/data/cases').glob('*.json'))
+          assert len(cases) == 100
+
+          for path in cases:
+              detail = json.loads(path.read_text(encoding='utf-8'))
+              assert len(detail['live_user_sequence']['turns']) == 100
+              assert 'exchanges' not in detail['history']
+
+              for asset in detail['case']['assets']:
+                  matches = list(Path('site/media').glob(asset['asset_id'] + '.*'))
+                  assert len(matches) == 1
+                  assert hashlib.sha256(matches[0].read_bytes()).hexdigest() == asset['sha256']
+                  seen.add(asset['asset_id'])
+
+          assert len(seen) == 150
+          print('Current website verified: 100 cases, 10000 fixed users, 150 unchanged images.')
+          PY
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
+
       - name: Upload website
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
+
       - name: Publish Pages
         id: deployment
         uses: actions/deploy-pages@v5
