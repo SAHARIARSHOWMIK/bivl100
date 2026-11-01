@@ -1,20 +1,16 @@
 name: Publish website
-
 on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: [BIVL100_V4_WEBSITE_SMALL.zip, .github/workflows/deploy.yml]
-
+    paths: [.github/workflows/deploy.yml]
 permissions:
   contents: read
   pages: write
   id-token: write
-
 concurrency:
   group: pages
   cancel-in-progress: false
-
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -22,59 +18,59 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Assemble V4 website with unchanged existing images
+      - name: Assemble the independent website
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 3 \
-            "https://raw.githubusercontent.com/SAHARIARSHOWMIK/bivl100/${{ github.sha }}/BIVL100_V4_WEBSITE_SMALL.zip" \
-            -o website.zip
-          echo "9d5f9a184c79e07764f22c024aab1fb02707ab9f8ba7c86f54c426b551274342  website.zip" | sha256sum --check -
-          unzip -tq website.zip
-          mkdir site
-          unzip -q website.zip -d site
-          curl --fail --location --retry 3 \
-            https://github.com/SAHARIARSHOWMIK/bivl100/releases/download/site/website.zip \
-            -o original-media.zip
-          echo "d475c03b15fddf00577ef4469ed6411ca94f333fe47f4ed0143b973588e56642  original-media.zip" | sha256sum --check -
+          curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_WEBSITE.zip" -o "BIVL100_WEBSITE.zip"
+          curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_01.zip" -o "BIVL100_IMAGES_01.zip"
+          curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_02.zip" -o "BIVL100_IMAGES_02.zip"
+          curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_03.zip" -o "BIVL100_IMAGES_03.zip"
+          curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_04.zip" -o "BIVL100_IMAGES_04.zip"
+          curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_05.zip" -o "BIVL100_IMAGES_05.zip"
+          curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_06.zip" -o "BIVL100_IMAGES_06.zip"
+          sha256sum --check <<'SUMS'
+          d98f096e4251bf250c8b5654dd039b8fbcc5525434a18c82b8737292a6c6bce8  BIVL100_WEBSITE.zip
+          900efe7c56516fc6bf4b81d9326d40f85c1c2355eba37a0ff3363554cab1e2bf  BIVL100_IMAGES_01.zip
+          5870c69ba9c8a7585a1af94976c84f57a748d5079ccf46e10c75fa6deea72b56  BIVL100_IMAGES_02.zip
+          d76e31defd78619b6630a6d3269ddcfa4dfc63f4beee52de9f36195a451b9bb4  BIVL100_IMAGES_03.zip
+          0cf73e01af2a43043f26e84ba476d989ca6c0cdb8674bb574cfeba9588ba82af  BIVL100_IMAGES_04.zip
+          f1ab6ba50975c2d050f75680441767823e97e1ac74512bd35ace48aa795c4999  BIVL100_IMAGES_05.zip
+          742e605a59159012b82c8052268a436cde27b3b7fc575ec8d6d4de42086b6b68  BIVL100_IMAGES_06.zip
+          SUMS
           python3 - <<'PY'
-          import hashlib, json, zipfile
+          import hashlib, json, stat, zipfile
           from pathlib import Path
-          site = Path('site').resolve()
-          # Restore byte-identical original images from the existing release.
-          families = [json.loads(line) for line in (site/'data/families.jsonl').read_text(encoding='utf-8').splitlines() if line.strip()]
-          with zipfile.ZipFile('original-media.zip') as archive:
-              for family in families:
-                  for image in family['image_variants']:
-                      target = (site/image['path']).resolve()
-                      assert target.is_relative_to(site), image['path']
-                      members = [name for name in archive.namelist() if name.startswith('media/' + image['asset_id'] + '.') and not name.endswith('/')]
-                      assert len(members) == 1, image['asset_id']
-                      member = members[0]
-                      data = archive.read(member)
-                      assert hashlib.sha256(data).hexdigest() == image['sha256'], member
-                      target.parent.mkdir(parents=True, exist_ok=True)
-                      target.write_bytes(data)
-          checks = json.loads((site/'data/content_sha256.json').read_text(encoding='utf-8'))
-          for name, expected in checks.items():
-              path = (site/name).resolve()
-              assert path.is_relative_to(site), name
-              assert hashlib.sha256(path.read_bytes()).hexdigest() == expected, name
-          def rows(name):
-              return [json.loads(line) for line in (site/'data'/name).read_text(encoding='utf-8').splitlines() if line.strip()]
-          families = rows('families.jsonl')
-          scripts = rows('compiled_user_scripts.jsonl')
-          specs = rows('independent_run_specs.jsonl')
-          reviews = rows('case_quality_review.jsonl')
-          assert len(families) == len(reviews) == 100
-          assert len(scripts) == 450 and all(len(s['turns']) == 100 for s in scripts)
-          assert len(specs) == 2250
-          assert {s['condition'] for s in scripts} == {'neutral','visually_consistent','misleading'}
-          assert {s['checkpoint'] for s in specs} == {0,8,24,50,100}
-          assert len({v['path'] for f in families for v in f['image_variants']}) == 150
-          assert json.loads((site/'data/manifest.json').read_text(encoding='utf-8'))['dataset_version'] == 'bivl100-rq-v4'
-          assert all((site/name).is_file() for name in ['index.html','app.js','style.css','404.html'])
-          print('Verified V4: 100 cases, 150 images, 450 full user scripts, 2250 checkpoint plans.')
+          site=Path('site').resolve();site.mkdir()
+          seen=set()
+          for name in ['BIVL100_WEBSITE.zip', 'BIVL100_IMAGES_01.zip', 'BIVL100_IMAGES_02.zip', 'BIVL100_IMAGES_03.zip', 'BIVL100_IMAGES_04.zip', 'BIVL100_IMAGES_05.zip', 'BIVL100_IMAGES_06.zip']:
+              with zipfile.ZipFile(name) as archive:
+                  assert archive.testzip() is None
+                  for member in archive.infolist():
+                      assert not member.is_dir()
+                      assert member.filename not in seen
+                      assert not stat.S_ISLNK(member.external_attr >> 16)
+                      target=(site/member.filename).resolve()
+                      assert target.is_relative_to(site)
+                      target.parent.mkdir(parents=True,exist_ok=True)
+                      target.write_bytes(archive.read(member))
+                      seen.add(member.filename)
+          checks=json.loads((site/'data/content_sha256.json').read_text(encoding='utf-8'))
+          assert seen==set(checks)|{'data/content_sha256.json'}
+          for path, expected in checks.items():
+              assert hashlib.sha256((site/path).read_bytes()).hexdigest()==expected,path
+          data=json.loads((site/'data/dataset.json').read_text(encoding='utf-8'))
+          assert data['name']=='BiVL-100'
+          assert len(data['families'])==len(data['reviews'])==100
+          assert len(data['scripts'])==450 and all(len(s['turns'])==100 for s in data['scripts'])
+          assert len(data['run_specs'])==2250
+          assert {s['condition'] for s in data['scripts']}=={'neutral','visually_consistent','misleading'}
+          assert {s['checkpoint'] for s in data['run_specs']}=={0,8,24,50,100}
+          images={v['path']:v['sha256'] for f in data['families'] for v in f['image_variants']}
+          assert len(images)==150
+          for path,expected in images.items():
+              assert hashlib.sha256((site/path).read_bytes()).hexdigest()==expected,path
+          print('Verified one dataset, 100 cases, 450 scripts, 2250 plans and 150 original images.')
           PY
       - name: Configure Pages
         uses: actions/configure-pages@v5
