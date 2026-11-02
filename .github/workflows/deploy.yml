@@ -1,36 +1,42 @@
 name: Publish website
+
 on:
   workflow_dispatch:
   push:
     branches: [main]
     paths: [.github/workflows/deploy.yml]
+
 permissions:
   contents: read
   pages: write
   id-token: write
+
 concurrency:
   group: pages
   cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+
     steps:
       - name: Assemble the independent website
         shell: bash
         run: |
           set -euo pipefail
-          curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_WEBSITE.zip" -o "BIVL100_WEBSITE.zip"
+          curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/bivl100.zip" -o "bivl100.zip"
           curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_01.zip" -o "BIVL100_IMAGES_01.zip"
           curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_02.zip" -o "BIVL100_IMAGES_02.zip"
           curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_03.zip" -o "BIVL100_IMAGES_03.zip"
           curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_04.zip" -o "BIVL100_IMAGES_04.zip"
           curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_05.zip" -o "BIVL100_IMAGES_05.zip"
           curl --fail --location --retry 3 "https://github.com/${{ github.repository }}/releases/download/website/BIVL100_IMAGES_06.zip" -o "BIVL100_IMAGES_06.zip"
+
           sha256sum --check <<'SUMS'
-          d98f096e4251bf250c8b5654dd039b8fbcc5525434a18c82b8737292a6c6bce8  BIVL100_WEBSITE.zip
+          a534312d65f03902b79206bd7dcde1f8af0aa6aa758e810764993eaeefbb433d  bivl100.zip
           900efe7c56516fc6bf4b81d9326d40f85c1c2355eba37a0ff3363554cab1e2bf  BIVL100_IMAGES_01.zip
           5870c69ba9c8a7585a1af94976c84f57a748d5079ccf46e10c75fa6deea72b56  BIVL100_IMAGES_02.zip
           d76e31defd78619b6630a6d3269ddcfa4dfc63f4beee52de9f36195a451b9bb4  BIVL100_IMAGES_03.zip
@@ -38,12 +44,13 @@ jobs:
           f1ab6ba50975c2d050f75680441767823e97e1ac74512bd35ace48aa795c4999  BIVL100_IMAGES_05.zip
           742e605a59159012b82c8052268a436cde27b3b7fc575ec8d6d4de42086b6b68  BIVL100_IMAGES_06.zip
           SUMS
+
           python3 - <<'PY'
           import hashlib, json, stat, zipfile
           from pathlib import Path
           site=Path('site').resolve();site.mkdir()
           seen=set()
-          for name in ['BIVL100_WEBSITE.zip', 'BIVL100_IMAGES_01.zip', 'BIVL100_IMAGES_02.zip', 'BIVL100_IMAGES_03.zip', 'BIVL100_IMAGES_04.zip', 'BIVL100_IMAGES_05.zip', 'BIVL100_IMAGES_06.zip']:
+          for name in ['bivl100.zip', 'BIVL100_IMAGES_01.zip', 'BIVL100_IMAGES_02.zip', 'BIVL100_IMAGES_03.zip', 'BIVL100_IMAGES_04.zip', 'BIVL100_IMAGES_05.zip', 'BIVL100_IMAGES_06.zip']:
               with zipfile.ZipFile(name) as archive:
                   assert archive.testzip() is None
                   for member in archive.infolist():
@@ -60,24 +67,47 @@ jobs:
           for path, expected in checks.items():
               assert hashlib.sha256((site/path).read_bytes()).hexdigest()==expected,path
           data=json.loads((site/'data/dataset.json').read_text(encoding='utf-8'))
-          assert data['name']=='BiVL-100'
+          assert data['name']=='bivl100'
           assert len(data['families'])==len(data['reviews'])==100
-          assert len(data['scripts'])==450 and all(len(s['turns'])==100 for s in data['scripts'])
-          assert len(data['run_specs'])==2250
+          assert len(data['scripts'])==444 and all(len(s['turns'])==100 for s in data['scripts'])
+          assert len(data['run_specs'])==2220
+          assert data['manifest']['execution_authorized'] is False
+          assert data['manifest']['rejected_without_authoring_case_ids']==['case_bb00e914a3d8885c5c23251d']
           assert {s['condition'] for s in data['scripts']}=={'neutral','visually_consistent','misleading'}
           assert {s['checkpoint'] for s in data['run_specs']}=={0,8,24,50,100}
           images={v['path']:v['sha256'] for f in data['families'] for v in f['image_variants']}
           assert len(images)==150
           for path,expected in images.items():
               assert hashlib.sha256((site/path).read_bytes()).hexdigest()==expected,path
-          print('Verified one dataset, 100 cases, 450 scripts, 2250 plans and 150 original images.')
+          # A replaced release must never reuse the old site's CSS/JS cache keys.
+          # Check the original archive first, then fingerprint only viewer assets.
+          index=site/'index.html'
+          html=index.read_text(encoding='utf-8')
+          for asset,attribute in [('style.css','href'),('app.js','src')]:
+              original=site/asset
+              digest=hashlib.sha256(original.read_bytes()).hexdigest()
+              renamed=original.with_name(original.stem+'.'+digest+original.suffix)
+              reference=attribute+'="'+asset+'"'
+              assert html.count(reference)==1,asset
+              html=html.replace(reference,attribute+'="'+renamed.name+'"')
+              original.rename(renamed)
+              checks[renamed.name]=checks.pop(asset)
+          index.write_text(html,encoding='utf-8')
+          checks['index.html']=hashlib.sha256(index.read_bytes()).hexdigest()
+          (site/'data/content_sha256.json').write_text(json.dumps(checks,indent=2)+'\n',encoding='utf-8')
+          for path,expected in checks.items():
+              assert hashlib.sha256((site/path).read_bytes()).hexdigest()==expected,path
+          print('Verified bivl100: 100 cases, 444 scripts, 2220 plans and 150 original images; review decisions preserved.')
           PY
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
+
       - name: Upload website
         uses: actions/upload-pages-artifact@v4
         with:
           path: site
+
       - name: Publish Pages
         id: deployment
         uses: actions/deploy-pages@v4
